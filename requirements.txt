@@ -1,0 +1,13 @@
+# Core runtime packages for the Freenove car project
+# Install with: pip install -r requirements.txt
+
+opencv-python
+numpy
+pillow
+pygame
+requests
+flask
+python-socketio
+gpiozero
+picamera2
+PyQt5
