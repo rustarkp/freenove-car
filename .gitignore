@@ -5,3 +5,13 @@ __pycache__/
 .DS_Store
 .vscode/
 *.swp
+private_data/*
+!private_data/README.md
+!private_data/faces/
+!private_data/faces/.gitkeep
+!private_data/maps/
+!private_data/maps/.gitkeep
+!private_data/models/
+!private_data/models/.gitkeep
+!private_data/config/
+!private_data/config/.gitkeep

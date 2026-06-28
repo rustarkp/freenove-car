@@ -21,6 +21,7 @@ Sensitive data should stay out of GitHub. Keep it in a private location on the P
 ### Recommended private-data locations
 - $HOME/.local/share/robot
 - $HOME/.config/robot
+- ./private_data/ (local repository folder for faces, maps, models, and config)
 
 ### Run the private-data backup
 
