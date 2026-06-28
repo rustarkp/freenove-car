@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import io
+import json
 import os
 import time
 import threading
@@ -33,9 +34,10 @@ class StreamingOutput(io.BufferedIOBase):
 
 
 class CameraService:
-    def __init__(self, stream_size=(640, 480), capture_size=None):
+    def __init__(self, stream_size=(480, 320), capture_size=None):
         self.stream_size = stream_size
         self.capture_size = capture_size or (2592, 1944)
+        self.jpeg_quality = int(os.environ.get("JPEG_QUALITY", "85"))
         self.picam2 = Picamera2()
         self.transform = Transform(hflip=0, vflip=0)
         self.preview_config = self.picam2.create_preview_configuration(main={"size": self.stream_size}, transform=self.transform)
@@ -45,6 +47,7 @@ class CameraService:
         self.file_output = FileOutput(self.output)
         self.thread = None
         self.running = False
+        self.latest_capture_path = None
         self._lock = threading.Lock()
         self.picam2.configure(self.preview_config)
         self.picam2.start()
@@ -54,8 +57,14 @@ class CameraService:
         if filename is None:
             filename = datetime.now().strftime("capture-%Y%m%d-%H%M%S.jpg")
         path = IMAGES_DIR / filename
+        was_streaming = self.running
+        if was_streaming:
+            self.stop_stream()
         self.picam2.switch_mode_and_capture_file(self.capture_config, str(path), signal_function=lambda: None)
-        return str(path)
+        self.latest_capture_path = str(path)
+        if was_streaming:
+            self.start_stream()
+        return self.latest_capture_path
 
     def start_stream(self):
         if self.thread and self.thread.is_alive():
@@ -96,6 +105,17 @@ class StreamingHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(self._html().encode('utf-8'))
             return
+        if self.path == '/status':
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            payload = {
+                'streaming': bool(service and service.running),
+                'last_capture': service.latest_capture_path if service else None,
+                'image_dir': str(IMAGES_DIR),
+            }
+            self.wfile.write(json.dumps(payload).encode('utf-8'))
+            return
         if self.path == '/stream.mjpg':
             self.send_response(200)
             self.send_header('Content-Type', 'multipart/x-mixed-replace; boundary=frame')
@@ -123,12 +143,42 @@ class StreamingHandler(BaseHTTPRequestHandler):
     def _html(self):
         return """
         <html>
-          <head><title>Pi Car Stream</title></head>
+          <head>
+            <meta charset="utf-8" />
+            <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+            <title>Pi Car Stream</title>
+            <style>
+              body { font-family: Arial, sans-serif; margin: 0; padding: 12px; background: #111; color: #f5f5f5; }
+              .panel { max-width: 760px; margin: 0 auto; }
+              .controls { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0 12px; }
+              button { border: 0; border-radius: 8px; padding: 10px 12px; background: #2f80ed; color: white; font-weight: 600; }
+              img { width: 100%; max-width: 640px; border-radius: 10px; background: #000; }
+              .status { margin-top: 10px; padding: 10px; border-radius: 8px; background: #1f1f1f; font-size: 0.95em; }
+            </style>
+          </head>
           <body>
-            <h1>Pi Car Stream</h1>
-            <img src="/stream.mjpg" width="640" />
-            <br/><br/>
-            <button onclick="fetch('/capture').then(r=>r.json()).then(d=>alert(d.path))">Capture image</button>
+            <div class="panel">
+              <h1>Pi Car Stream</h1>
+              <div class="controls">
+                <button onclick="captureImage()">Capture image</button>
+                <button onclick="refreshStatus()">Refresh status</button>
+              </div>
+              <img src="/stream.mjpg" alt="Live stream" />
+              <div class="status" id="status">Loading...</div>
+            </div>
+            <script>
+              async function captureImage() {
+                const response = await fetch('/capture');
+                const data = await response.json();
+                document.getElementById('status').textContent = 'Captured: ' + data.path;
+              }
+              async function refreshStatus() {
+                const response = await fetch('/status');
+                const data = await response.json();
+                document.getElementById('status').textContent = 'Streaming: ' + data.streaming + ' | Last capture: ' + (data.last_capture || 'none');
+              }
+              refreshStatus();
+            </script>
           </body>
         </html>
         """
