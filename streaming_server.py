@@ -8,6 +8,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from picamera2 import Picamera2
+from picamera2.encoders import JpegEncoder
+from picamera2.outputs import FileOutput
 from libcamera import Transform
 
 ROOT = Path(__file__).resolve().parent
@@ -40,6 +42,7 @@ class CameraService:
         self.capture_config = self.picam2.create_still_configuration(main={"size": self.capture_size}, transform=self.transform)
         self.stream_config = self.picam2.create_video_configuration(main={"size": self.stream_size}, transform=self.transform)
         self.output = StreamingOutput()
+        self.file_output = FileOutput(self.output)
         self.thread = None
         self.running = False
         self._lock = threading.Lock()
@@ -59,7 +62,8 @@ class CameraService:
             return
         self.picam2.stop()
         self.picam2.configure(self.stream_config)
-        self.picam2.start_recording(self.output, format='mjpeg')
+        encoder = JpegEncoder()
+        self.picam2.start_recording(encoder, self.file_output)
         self.running = True
         self.thread = threading.Thread(target=self._stream_loop, daemon=True)
         self.thread.start()
