@@ -20,6 +20,8 @@ SERVER_DIR = ROOT / "Code" / "Server"
 if str(SERVER_DIR) not in sys.path:
     sys.path.insert(0, str(SERVER_DIR))
 
+from gamepad_controller import GamepadController
+
 PRIVATE_DATA = ROOT / "private_data"
 IMAGES_DIR = PRIVATE_DATA / "images"
 VIDEOS_DIR = PRIVATE_DATA / "videos"
@@ -203,6 +205,58 @@ class DriveController:
         return True
 
 
+class CameraController:
+    """Drives the pan/tilt camera servos (PCA9685 channels '0'/'1') as a rate
+    integrator: callers pass a -1..1 rate per axis each tick rather than an
+    absolute angle, so releasing a stick/button holds position instead of
+    snapping back to center. See docs/GAMEPAD_CONTROL.md."""
+
+    PAN_CHANNEL = '0'
+    TILT_CHANNEL = '1'
+    PAN_MIN, PAN_MAX = 0.0, 180.0
+    TILT_MIN, TILT_MAX = 80.0, 180.0
+    PAN_SPEED_DEG_S = 90.0
+    TILT_SPEED_DEG_S = 60.0
+
+    def __init__(self, servo_factory=None):
+        self.servo_factory = servo_factory or (lambda: None)
+        self.servo = None
+        self.pan_angle = 90.0
+        self.tilt_angle = 90.0
+        self.last_error = None
+        self.hardware_ready = False
+
+    def ensure_servo(self):
+        if self.servo is None:
+            try:
+                self.servo = self.servo_factory()
+                self.hardware_ready = True
+                self.last_error = None
+            except Exception as exc:
+                self.hardware_ready = False
+                self.last_error = str(exc)
+                self.servo = None
+        return self.servo
+
+    def update(self, pan_rate, tilt_rate, dt):
+        pan_rate = max(-1.0, min(1.0, float(pan_rate)))
+        tilt_rate = max(-1.0, min(1.0, float(tilt_rate)))
+        if pan_rate == 0.0 and tilt_rate == 0.0:
+            return True
+        self.pan_angle = max(self.PAN_MIN, min(self.PAN_MAX, self.pan_angle + pan_rate * self.PAN_SPEED_DEG_S * dt))
+        self.tilt_angle = max(self.TILT_MIN, min(self.TILT_MAX, self.tilt_angle + tilt_rate * self.TILT_SPEED_DEG_S * dt))
+        servo = self.ensure_servo()
+        if servo is None:
+            return True
+        try:
+            servo.set_servo_pwm(self.PAN_CHANNEL, int(self.pan_angle))
+            servo.set_servo_pwm(self.TILT_CHANNEL, int(self.tilt_angle))
+        except Exception as exc:
+            self.last_error = str(exc)
+            return False
+        return True
+
+
 class StreamingHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == '/':
@@ -222,6 +276,10 @@ class StreamingHandler(BaseHTTPRequestHandler):
                 'last_command': drive_controller.last_command if drive_controller else None,
                 'hardware_ready': bool(drive_controller and drive_controller.hardware_ready),
                 'last_error': drive_controller.last_error if drive_controller else None,
+                'gamepad_connected': bool(gamepad_controller and gamepad_controller.connected),
+                'pan_angle': camera_controller.pan_angle if camera_controller else None,
+                'tilt_angle': camera_controller.tilt_angle if camera_controller else None,
+                'camera_hardware_ready': bool(camera_controller and camera_controller.hardware_ready),
             }
             self.wfile.write(json.dumps(payload).encode('utf-8'))
             return
@@ -438,12 +496,17 @@ class StreamingHandler(BaseHTTPRequestHandler):
 
 service = None
 drive_controller = None
+camera_controller = None
+gamepad_controller = None
 
 
 def main():
-    global service, drive_controller
+    global service, drive_controller, camera_controller, gamepad_controller
     service = CameraService()
     drive_controller = DriveController(motor_factory=lambda: __import__('motor', fromlist=['Ordinary_Car']).Ordinary_Car())
+    camera_controller = CameraController(servo_factory=lambda: __import__('servo', fromlist=['Servo']).Servo())
+    gamepad_controller = GamepadController(drive_controller, camera_controller)
+    gamepad_controller.start()
     service.start_stream()
     server = ThreadingHTTPServer(('0.0.0.0', 8000), StreamingHandler)
     print('Streaming server listening on http://0.0.0.0:8000')
@@ -452,6 +515,7 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
+        gamepad_controller.stop()
         service.stop_stream()
         server.server_close()
 

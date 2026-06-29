@@ -5,8 +5,8 @@
 - [ ] Install and verify Python dependencies
 - [ ] Document the custom architecture and roadmap
 - [ ] Prototype remote video streaming to a phone or browser
-- [ ] Prototype gamepad input and custom mapping
-- [ ] Prototype camera pan/tilt control from gamepad
+- [x] Prototype gamepad input and custom mapping
+- [x] Prototype camera pan/tilt control from gamepad
 - [ ] Prototype face recognition and follow behavior
 - [ ] Explore voice/speaker integration and future turret work
 
