@@ -2,8 +2,10 @@ import time
 from pca9685 import PCA9685
 
 class Ordinary_Car:
-    def __init__(self):
-        self.pwm = PCA9685(0x40, debug=True)
+    def __init__(self, pwm=None):
+        # `pwm` lets callers (tests, dry-run tooling) inject a stand-in PCA9685
+        # instead of talking to real I2C hardware. See docs/HARDWARE_TESTING.md.
+        self.pwm = pwm or PCA9685(0x40, debug=True)
         self.pwm.set_pwm_freq(50)
     def duty_range(self, duty1, duty2, duty3, duty4):
         if duty1 > 4095:
@@ -24,40 +26,40 @@ class Ordinary_Car:
             duty4 = -4095
         return duty1,duty2,duty3,duty4
     def left_upper_wheel(self,duty):
-        if duty>0:
+        if duty > 0:
             self.pwm.set_motor_pwm(0,0)
             self.pwm.set_motor_pwm(1,duty)
-        elif duty<0:
+        elif duty < 0:
             self.pwm.set_motor_pwm(1,0)
             self.pwm.set_motor_pwm(0,abs(duty))
         else:
             self.pwm.set_motor_pwm(0,4095)
             self.pwm.set_motor_pwm(1,4095)
     def left_lower_wheel(self,duty):
-        if duty>0:
+        if duty > 0:
             self.pwm.set_motor_pwm(3,0)
             self.pwm.set_motor_pwm(2,duty)
-        elif duty<0:
+        elif duty < 0:
             self.pwm.set_motor_pwm(2,0)
             self.pwm.set_motor_pwm(3,abs(duty))
         else:
             self.pwm.set_motor_pwm(2,4095)
             self.pwm.set_motor_pwm(3,4095)
     def right_upper_wheel(self,duty):
-        if duty>0:
+        if duty > 0:
             self.pwm.set_motor_pwm(6,0)
             self.pwm.set_motor_pwm(7,duty)
-        elif duty<0:
+        elif duty < 0:
             self.pwm.set_motor_pwm(7,0)
             self.pwm.set_motor_pwm(6,abs(duty))
         else:
             self.pwm.set_motor_pwm(6,4095)
             self.pwm.set_motor_pwm(7,4095)
     def right_lower_wheel(self,duty):
-        if duty>0:
+        if duty > 0:
             self.pwm.set_motor_pwm(4,0)
             self.pwm.set_motor_pwm(5,duty)
-        elif duty<0:
+        elif duty < 0:
             self.pwm.set_motor_pwm(5,0)
             self.pwm.set_motor_pwm(4,abs(duty))
         else:

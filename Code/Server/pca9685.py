@@ -3,6 +3,9 @@
 import time
 import math
 import smbus
+import glob
+import re
+import subprocess
 
 # ============================================================================
 # Raspi PCA9685 16-Channel PWM Servo Driver
@@ -24,18 +27,105 @@ class PCA9685:
     __ALLLED_OFF_L       = 0xFC
     __ALLLED_OFF_H       = 0xFD
 
-    def __init__(self, address: int = 0x40, debug: bool = False):
-        self.bus = smbus.SMBus(1)
+    def __init__(self, address: int = 0x40, debug: bool = False, bus=None):
+        # `bus` lets callers (tests, dry-run tooling) inject a stand-in object
+        # implementing write_byte_data/read_byte_data/close instead of a real
+        # smbus.SMBus, e.g. fake_hardware.FakeI2CBus. See docs/HARDWARE_TESTING.md.
+        if bus is not None:
+            self.bus = bus
+            used_bus = 'injected'
+            self.address = address
+            self.debug = debug
+            self.available = True
+            if self.debug:
+                print(f"PCA9685: using injected bus address {hex(address)}")
+            try:
+                self.write(self.__MODE1, 0x00)
+            except Exception as exc:
+                self.available = False
+                if self.debug:
+                    print('PCA9685 init warning:', type(exc).__name__, exc)
+            return
+
+        # Auto-detect an available I2C bus. Try common bus numbers first,
+        # then any /dev/i2c-* entries found on the system.
+        self.bus = None
+        # Build candidate bus list: prefer actual /dev/i2c-* entries first
+        candidates = []
+        try:
+            devs = glob.glob('/dev/i2c-*')
+            bus_nums = []
+            for d in devs:
+                m = re.search(r'i2c-(\d+)', d)
+                if m:
+                    bus_nums.append(int(m.group(1)))
+            # prefer discovered buses first, then fallback common buses
+            candidates = bus_nums + [1, 4, 11, 13, 14]
+        except Exception:
+            candidates = [1, 4, 11, 13, 14]
+
+        # If i2cdetect is available, prefer buses that report address 0x40
+        i2cdetect_available = False
+        try:
+            subprocess.run(['i2cdetect', '--version'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            i2cdetect_available = True
+        except Exception:
+            i2cdetect_available = False
+
+        if i2cdetect_available:
+            for b in candidates:
+                try:
+                    out = subprocess.check_output(['i2cdetect', '-y', str(b)], text=True, stderr=subprocess.DEVNULL)
+                    # look for '40' as a standalone hex token in the output
+                    if re.search(r'(?<!:)\b40\b(?!:)', out):
+                        try:
+                            self.bus = smbus.SMBus(b)
+                            used_bus = b
+                            break
+                        except Exception:
+                            self.bus = None
+                            continue
+                except Exception:
+                    continue
+        else:
+            for b in candidates:
+                try:
+                    # Attempt to open the SMBus for this bus number
+                    test_bus = smbus.SMBus(b)
+                except Exception:
+                    continue
+                # Keep the bus open; we'll test device when accessing it later
+                self.bus = test_bus
+                used_bus = b
+                break
+
+        if self.bus is None:
+            raise FileNotFoundError('No available i2c bus found')
+
         self.address = address
         self.debug = debug
-        self.write(self.__MODE1, 0x00)
+        self.available = True
+        if self.debug:
+            print(f"PCA9685: using i2c bus {used_bus} address {hex(address)}")
+        try:
+            self.write(self.__MODE1, 0x00)
+        except Exception as exc:
+            # Hardware not responding; mark unavailable and continue so higher-level
+            # code can decide to run in simulation or handle absence.
+            self.available = False
+            if self.debug:
+                print('PCA9685 init warning:', type(exc).__name__, exc)
     
     def write(self, reg: int, value: int) -> None:
         """Writes an 8-bit value to the specified register/address."""
+        if not getattr(self, 'available', True):
+            raise OSError('PCA9685 not available')
         self.bus.write_byte_data(self.address, reg, value)
       
     def read(self, reg: int) -> int:
         """Read an unsigned byte from the I2C device."""
+        if not getattr(self, 'available', True):
+            raise OSError('PCA9685 not available')
         result = self.bus.read_byte_data(self.address, reg)
         return result
     
@@ -73,7 +163,11 @@ class PCA9685:
 
     def close(self) -> None:
         """Close the I2C bus."""
-        self.bus.close()
+        try:
+            if self.bus is not None:
+                self.bus.close()
+        except Exception:
+            pass
 
 
 if __name__=='__main__':
